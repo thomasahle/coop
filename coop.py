@@ -231,17 +231,13 @@ class Coop:
             with path.open('r') as file:
                 return json.load(file)
 
-    def search(self, n=10):
-        print('Henter varer...')
+    def search(self, term, n=10):
         # Hvad er forskellen til search/products?
         # GET https://butik.mad.coop.dk/api/search/products?term=%2a&categories=326&lastFacet=sortby&sortby=Offers&pageSize=14
-        r = self.get('https://butik.mad.coop.dk/api/search/search', params=dict(
-            categories=229,
-            lastFacet='categories',
+        # labels, 
+        return self.get('https://butik.mad.coop.dk/api/search/search', params=dict(
+            term=term,
             pageSize=n))
-        for vare in json.loads(r.text)['products']:
-            #print(vare)
-            print(vare['displayName'], vare['isInAssortment'])
 
 # API CALLS:
 # GET https://butik.mad.coop.dk/api/search/getbyids?productids=82896001453,...,8028752820020,7804320032290&pageSize=21&offersOnly=true
@@ -486,6 +482,19 @@ def test(coop, args):
     print(r)
     print(r.text)
 
+def search(coop, args):
+    r = coop.search(args.term, n=3)
+    products = json.loads(r.text)['products']
+    #print(f'Fandt {len(products)} muligheder:\n')
+    print()
+    for vare in products:
+        print(bold_text(vare['displayName']), vare['id'])
+        print(vare['spotText'])
+        if vare['labels']:
+            print(', '.join(l['displayName'] for l in vare['labels']))
+        print('https://butik.mad.coop.dk' + vare['url'])
+        print()
+
 def user(coop, args):
     res = coop.get_user_context()
     for key, value in res.items():
@@ -544,6 +553,10 @@ order_parser = subparsers.add_parser('ordrer', help='Vis gamle bestillinger')
 order_parser.add_argument('n', type=int, nargs='?', help='Write the nth order')
 order_parser.add_argument('--write', type=argparse.FileType('w'), metavar='FILE_NAME', help='Write basket as csv')
 order_parser.set_defaults(func=orders)
+
+search_parser = subparsers.add_parser('search', help='Search for products')
+search_parser.add_argument('term', type=str, help='Search term')
+search_parser.set_defaults(func=search)
 
 def main():
     args = parser.parse_args()
