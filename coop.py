@@ -11,26 +11,9 @@ import contextlib
 import csv
 import sys
 import logging
+import datetime
 
-try:
-    import editdistance
-    editdist = editdistance.eval
-except ImportError:
-    print('Using slow editdistance.')
-    print('Please run `pip install editdistance`')
-    def editdist(s1, s2):
-        if len(s1) > len(s2):
-            s1, s2 = s2, s1
-        distances = range(len(s1) + 1)
-        for i2, c2 in enumerate(s2):
-            distances_ = [i2+1]
-            for i1, c1 in enumerate(s1):
-                if c1 == c2:
-                    distances_.append(distances[i1])
-                else:
-                    distances_.append(1 + min((distances[i1], distances[i1 + 1], distances_[-1])))
-            distances = distances_
-        return distances[-1]
+API = 'https://butik.mad.coop.dk/api/'
 
 class Coop:
     def __init__(self, cookies_path):
@@ -69,7 +52,7 @@ class Coop:
         return self.__login_cb(r)
 
     def login(self, username, password, skip_context=False):
-        success = self.__login('https://butik.mad.coop.dk/api/authentication/loginsrc', username, password)
+        success = self.__login('authentication/loginsrc', username, password)
         if success:
             # Update context to make sure zip is correct
             self.context = self.get_user_context()
@@ -90,7 +73,8 @@ class Coop:
         return True
 
     def get(self, path, **kwargs):
-        r = self.s.get(path, **kwargs)
+        # Keyword arguments are sent as params
+        r = self.s.get(path, params=kwargs)
         if '<noscript><button>Click to continue</button>' in r.text:
         #if "action='https://coop.dk/login/login/logincallback'" in r.text:
             print('Using login_callback')
@@ -107,72 +91,70 @@ class Coop:
         return r
 
     def post(self, path, **kwargs):
-        r = self.s.post(path, **kwargs)
+        # Keyword arguments are sent as json
+        r = self.s.post(path, json=kwargs)
         if r.status_code != 200:
             print('Status code:', r)
             print('Text:', r.text)
         return r
 
     def get_latest_editable_order(self):
-        r = coop.get('https://butik.mad.coop.dk/api/orderhistory/latesteditableorder')
+        r = coop.get(API+'orderhistory/latesteditableorder')
         return json.loads(r.text)
 
     @contextlib.contextmanager
     def edit_order(self, order_identifier):
         try:
-            r = self.post('https://butik.mad.coop.dk/api/editorder/initEdit',
-                    json=dict(orderIdentifier=order_identifier, mergeCurrentBasket=False))
+            r = self.post(API+'editorder/initEdit',
+                    orderIdentifier=order_identifier, mergeCurrentBasket=False)
             assert r.status_code == 200
         finally:
-            r = self.post('https://butik.mad.coop.dk/api/editorder/cancelEditOrderMode')
+            r = self.post(API+'editorder/cancelEditOrderMode')
             # FIXME: Check status code
 
     def get_stores(self, is_new_site=True):
-        r = self.get('https://butik.mad.coop.dk/api/store/get',
-                params=dict(isNewSite=is_new_site,
-                            zipCode=self.zip))
+        r = self.get(API+'store/get', isNewSite=is_new_site, zipCode=self.zip)
         return json.loads(r.text)
 
-    def get_timeslots(self, is_home_delivery=True, store_id='000005'):
-        r = self.get('https://butik.mad.coop.dk/api/timeslot/gettimeslots',
-                params=dict(isHomeDelivery=is_home_delivery,
-                            storeid=store_id,
-                            zipCode=self.zip))
+    def get_timeslots(self, is_home_delivery, store_id, date=None):
+        params = dict(isHomeDelivery=is_home_delivery,
+                      storeid=store_id,
+                      zipCode=self.zip)
+        if date:
+            params['selectedDate'] = f'{date.isoformat()}T00:00:00'
+        r = self.get(API+'timeslot/gettimeslots', **params)
         return json.loads(r.text)
 
     def check_slot(self, time_slot_id, store_id):
-        r = self.post('https://butik.mad.coop.dk/api/timeslot/checkslot',
-                json=dict(id=time_slot_id, storeid=store_id, zipCode=self.zip))
+        r = self.post(API+'timeslot/checkslot',
+                id=time_slot_id, storeid=store_id, zipCode=self.zip)
         # Success: {"totalPriceChange":null,"unavailableProducts":null,"changedProducts":null,"isCheaper":null}
         return json.loads(r.text)
 
-    def set_delivery_options(self, time_slot_id, store_id, is_home_delivery=True, umbraco=1064):
+    def set_delivery_options(self, time_slot_id, store_id, is_home_delivery, umbraco=1064):
+        # I don't know what umbraco is.
         # Note they use a capital I in storeId here...
-        r = self.post('https://butik.mad.coop.dk/api/timeslot/SetDeliveryOptions',
-                json=dict(timeSlotId=time_slot_id, storeId=store_id, zipCode=self.zip,
-                          isHomeDelivery=True, umbracoPageId=umbraco))
+        r = self.post(API+'timeslot/SetDeliveryOptions',
+                timeSlotId=time_slot_id, storeId=store_id, zipCode=self.zip,
+                isHomeDelivery=True, umbracoPageId=umbraco)
         # Same type of response as update_basked requests.
         return json.loads(r.text)
 
     def get_invoiced_orders(self, n=100, page=0):
-        r = self.get('https://butik.mad.coop.dk/api/orderhistory/invoicedorders',
-                params=dict(page=page, pageSize=n))
+        r = self.get(API+'orderhistory/invoicedorders', page=page, pageSize=n)
         return json.loads(r.text)
 
     def get_order_history_detail(self, order_identifier):
-        r = self.get('https://butik.mad.coop.dk/api/orderhistory/orderhistorydetail',
-                params=dict(orderIdentifier=order_identifier))
+        r = self.get(API+'orderhistory/orderhistorydetail', orderIdentifier=order_identifier)
         return json.loads(r.text)
 
     def get_basket(self, refresh=False):
-        r = self.get('https://butik.mad.coop.dk/api/basket/get',
-                params=dict(refresh=refresh))
+        r = self.get(API+'basket/get', refresh=refresh)
         return json.loads(r.text)
 
     def multi_update_basket(self, id_qs):
-        d = dict(lineItemUpdates=[dict(productId=pi, quantity=q, lineItemId=None)
-                                    for pi, q in id_qs])
-        r = self.post('https://butik.mad.coop.dk/api/basket/update', json=d)
+        r = self.post(API+'basket/update', lineItemUpdates=
+                [dict(productId=pi, quantity=q, lineItemId=None) for pi, q in id_qs])
         return json.loads(r.text)
 
     def update_basket(self, product_id, quantity, line_item_id=None):
@@ -181,12 +163,12 @@ class Coop:
         return self.multi_update_basket([product_id, quantity])
 
     def get_stock(self, pids, order_identifier, store_id, timeslot_id):
-        r = self.post('https://butik.mad.coop.dk/api/stock/stock', json=dict(
+        r = self.post(API+'stock/stock',
             orderIdentifier=order_identifier,
             productIds=pids,
             storeId=store_id,
             timeSlotId=timeslot_id,
-            zipCode=self.zip))
+            zipCode=self.zip)
         # Returns a list of dicts.
         # For sold out products:
             # cutOffDate: null
@@ -206,12 +188,22 @@ class Coop:
 
     def is_login(self):
         # Unfortunately we're not allowed to just call HEAD.
-        r = self.get('https://butik.mad.coop.dk/api/coopmember/get')
+        r = self.get(API+'coopmember/get')
         return (r.status_code == 200), json.loads(r.text)
 
     def get_user_context(self, r=None):
         # User context contains this stuff:
-        # userContext: {"name":"Rune Ytting Hellden","isAuthenticated":true,"showProfileNavigation":true,"isCsUser":false,"email":"nebbegaardsbakken52@gmail.com","impersonator":null,"zipCode":"2400","isShadowLogin":false,"coopMemberType":3,"memberNumber":"33084191"},
+        # userContext: {
+        # "name":"...",
+        # "isAuthenticated":true,
+        # "showProfileNavigation":true,
+        # "isCsUser":false,
+        # "email":"...",
+        # "impersonator":null,
+        # "zipCode":"...",
+        # "isShadowLogin":false,
+        # "coopMemberType":3,
+        # "memberNumber":"..."},
         # We can get the context from any page request (doesn't use the api)
         if r is None:
             r = self.get('https://butik.mad.coop.dk/min-profil/profiloplysninger')
@@ -221,8 +213,7 @@ class Coop:
     def get_all_products(self, n=10, page=0):
         path = pathlib.Path(f'products_n{n}_p{page}.cached')
         if not path.is_file():
-            r = self.get('https://butik.mad.coop.dk/api/search/products', params=dict(
-                pageSize=n, page=page))
+            r = self.get(API+'search/products', pageSize=n, page=page)
             prods = json.loads(r.text)['products']
             with path.open('w') as file:
                 json.dump(prods, file)
@@ -234,41 +225,24 @@ class Coop:
     def search(self, term, n=10):
         # Hvad er forskellen til search/products?
         # GET https://butik.mad.coop.dk/api/search/products?term=%2a&categories=326&lastFacet=sortby&sortby=Offers&pageSize=14
-        # labels, 
-        return self.get('https://butik.mad.coop.dk/api/search/search', params=dict(
-            term=term,
-            pageSize=n))
+        # labels
+        r = self.get(API+'search/search', term=term, pageSize=n)
+        return json.loads(r.text)
 
-# API CALLS:
-# GET https://butik.mad.coop.dk/api/search/getbyids?productids=82896001453,...,8028752820020,7804320032290&pageSize=21&offersOnly=true
-# Hvis et produkt er udgaaet kommer det ikke med i soegning, men kan stadig komme i tophundred.
-# Det har isInAssortment=false, hvor normale produkter har isInAssortment=true.
+    def getbyids(self, ids):
+        r = self.get(API+'search/getbyids', productids=ids)
+        return json.loads(r.text)
+        # Extra arguments: pageSize=21&offersOnly=true
 
+    def tophundred(self, limit=100):
+        r = self.get(API+'tophundred/get', maxresults=limit)
+        return json.loads(r.text)
+        # Hvis et produkt er udgaaet kommer det ikke med i soegning, men kan stadig komme i tophundred.
+        # Det har isInAssortment=false, hvor normale produkter har isInAssortment=true.
 
 
 def bold_text(text):
     return f"\033[1m{text}\033[0m"
-
-class ProductFinder:
-    def __init__(self, coop):
-        self.prods = []
-        print('Vent venligst mens vi downloader alle coops produkter')
-        for i in range(100):
-            print('.', end='', flush=True)
-            chunk = coop.get_all_products(n=1000, page=i)
-            self.prods += chunk
-            if len(chunk) < 1000:
-                break
-        print(f'\nHentede {len(self.prods)} produkter.')
-
-    def byid(self, pid):
-        return next((p for p in self.prods if p['id'] == pid), None)
-
-    def suggestions(self, prod_name, n=10):
-        for p in sorted(self.prods, key=lambda p: editdist(prod_name, p['displayName']))[:n]:
-            p = p.copy()
-            p['name_original'] = prod_name
-            yield p
 
 def basket(coop, args):
     if args.clear: basket_clear(coop, args)
@@ -278,10 +252,11 @@ def basket(coop, args):
 
 def basket_clear(coop, args):
     updates = []
+    print('Vent venligst...')
     for item in coop.get_basket()['lineItems']:
         updates.append((item['product']['id'], -item['quantity']))
     if updates:
-        # Don't clear if there's nothing in the basket.
+        print(f'Fjerner {len(updates)} varer...')
         res = coop.multi_update_basket(updates)
         assert len(res["lineItems"]) == 0
 
@@ -292,76 +267,81 @@ def basket_write(coop, args):
         writer.writerow([item['quantity'], f"{display_name} [{pid}]"])
 
 def basket_read(coop, args):
-    pids = set() # All pids we want stock info for. Pid -> Product Dict
-    quantities = [] # Amount we want of each product. Pid -> Int
+    quantities = [] # Amount we want of each product. (q, name, [ids])
     reader = csv.reader(args.read)
-    pf = ProductFinder(coop)
     for row in reader:
         if not row or row[0].strip()[0] == '#':
             # Ignoring comments
             continue
         q, prod_name, *ids = row
-        prods = []
+        pids = []
         for pid in ids:
             # Remove comments
             pid = re.sub('\(.*?\)', '', pid).strip()
-            p = pf.byid(pid)
-            if p is None:
-                print(f'Kunne ikke se id {pid} ({prod_name}) i kataloget. Slet cache filer?')
-            else:
-                prods.append(p)
-        # Add suggestions, unless they are already there
-        for sug in pf.suggestions(prod_name, n=5):
-            if not any(p['id'] == sug['id'] for p in prods):
-                prods.append(sug)
-
-        quantities.append((int(q), prods)) # Also the amount of each product to actually order
-        for p in prods:
-            pids.add(p['id'])
+            pids.append(pid)
+        quantities.append((int(q), prod_name, pids))
+    all_pids = set.union(*(set(pids) for _, _, pids in quantities))
 
     print('Checker om varerne er tilgængelige...')
+    missing = [] # [(n, prod_name)]
     basket = coop.get_basket()
     if basket['timeSlot'] is None:
         print('Intet tidspunkt valgt. Kan ikke checke stock.')
-        print('Kør "coop.py tidspunkt -pick" for automatisk at vælge et tidspunkt.')
-        to_order = [(prods[0], q) for q, prods in quantities]
+        print('Kør "coop.py tidspunkt --pick" for automatisk at vælge et tidspunkt.')
+        order = [(pids[0], q) for q, _, pids in quantities]
     else:
         stock = coop.get_stock(
-                list(pids),
+                list(all_pids),
                 basket['orderIdentifier'],
                 basket['store']['id'],
                 basket['timeSlot']["timeSlotId"])
         available = {s['itemId']:s for s in stock}
-        to_order = []
-        for wanted, prods in quantities:
-            p = prods[0]
-            pid = p['id']
+        order = []
+        for wanted, prod_name, pids in quantities:
+            pid = pids[0]
             q = available[pid]['quantity']
-            to_order.append((p, min(wanted, q)))
+            order.append((pid, min(wanted, q)))
             if wanted > q:
                 amount = f'kun {q}' if q > 0 else 'ingen'
-                print(f'Der er {amount} "{p["displayName"]}" tilbage.', available[pid]['label'])
+                print(f'Der er {amount} "{prod_name}" ({pid}) tilbage.', available[pid]['label'])
                 wanted -= q
-                for alt in prods[1:]:
-                    q = available[alt['id']]['quantity']
+                for altid in pids[1:]:
+                    q = available[altid]['quantity']
                     take = min(q, wanted)
                     if take > 0:
-                        print(f'Tager {take} "{alt["displayName"]}" som alternativ.')
-                        to_order.append((alt, take))
+                        # TODO: Write a better name here?
+                        print(f'Tager {take} "{altid}" som alternativ.')
+                        order.append((altid, take))
                         wanted -= take
                 if wanted > 0:
-                    print(f'Ingen alternativer tilbage for {wanted} "{p["displayName"]}".')
+                    missing.append((wanted, prod_name))
 
-    print('Vent venligst...')
-    if to_order:
-        for p, q in to_order:
-            name_original = p.get('name_original')
-            if name_original:
-                print(f'VIGTIG: {q} {p["displayName"]} er valgt automatisk ud fra at minde om {name_original}.')
-        if not args.test:
-            order = [(p['id'], q) for p, q in to_order]
-            res = coop.multi_update_basket(order)
-            print(f'Kurven har nu {len(res["lineItems"])} varer.')
+    if missing:
+        print('\nNogle varer var ikke tilgængelige. Her er nogle alternativer til din fil:')
+        search_results = []
+        for wanted, prod_name in missing:
+            new_products = []
+            for p in coop.search(prod_name, n=3)['products']:
+                # Don't include those already in our document
+                if p['id'] not in all_pids:
+                    new_products.append(p)
+            search_results.append(new_products)
+        # Let's only show new products that are actually in stock
+        stock = coop.get_stock(
+                [p['id'] for prods in search_results for p in prods],
+                basket['orderIdentifier'], basket['store']['id'], basket['timeSlot']["timeSlotId"])
+        available = {s['itemId']:s for s in stock}
+        for (wanted, prod_name), new_products in zip(missing, search_results):
+            for p in new_products:
+                q = available[p['id']]['quantity']
+                if q > 0:
+                    print(f'{p["displayName"]}, {p["id"]} ({p["spotText"]}, Lager: {q})')
+        print()
+
+    if order and not args.test:
+        print('Vent venligst...')
+        res = coop.multi_update_basket(order)
+        print(f'Kurven har nu {len(res["lineItems"])} varer.')
 
 def basket_show(coop, args):
     basket = coop.get_basket()
@@ -403,7 +383,12 @@ def orders(coop, args):
         details = coop.get_order_history_detail(order['orderIdentifier'])
         if args.write:
             writer = csv.writer(args.write, dialect='excel')
+            writer.writerow(['# Dette er en coop.py bestillingsliste.'])
+            writer.writerow(['# Kolonne 1 er antal; kolonne 2 er et kaldenavn; og de'])
+            writer.writerow(['# resterende kolonner er produkt-id\'er i prioriteret orden.'])
+            writer.writerow(['# Alle felter kan indeholde kommentarer i (parentes).'])
             for cat in details['categories']:
+                writer.writerow([])
                 writer.writerow([f"# {cat['name']}"])
                 for item in cat['lineItems']:
                     display_name = item['displayName']
@@ -428,23 +413,33 @@ def slot_loss(slot, best_time):
     # Compute distance from best_time to the interval [a,b]
     return max(best_time - b, a - best_time, 0)
 
-def pick_timeslot(coop, day, hour):
+def pick_timeslot(coop, weekday, hour):
     stores = coop.get_stores()
     if len(stores) > 1:
         print('Der er flere butikker tilgængelige:', ', '.join(s['address'] for s in stores))
     store_id = stores[0]['id']
-    slots = coop.get_timeslots(is_home_delivery=True, store_id=store_id)
+
+    # It seems we sometimes need the to be specified in the request.
+    # The behaviour seems unstable.
+    date = datetime.date.today()
+    while date.weekday() != weekday:
+        date += datetime.timedelta(days=1)
+
+    slots = coop.get_timeslots(is_home_delivery=True, store_id=store_id, date=date)
     for slot_day in slots['timeSlotDeliveryDays']:
         # Pick first Wednesday
-        if slot_day['deliveryDateFormattedShort'].startswith(day):
+        if datetime.datetime.fromisoformat(slot_day['deliveryDate']).weekday() == weekday:
             # Pick timeslot not too far away fom 6pm
-            q, _, best = min((slot_loss(s, hour), s['displayName'], s) for s in slot_day['timeSlots'])
-            if q > 1:
+            q = 10**10 # No timeslots == very bad quality.
+            if slot_day['timeSlots']:
+                q, _, best = min((slot_loss(s, hour), s['displayName'], s) for s in slot_day['timeSlots'])
+            if q > 1: # Acceptable quality
                 print(f'Kunne ikke finde godt tidspunkt {day}.')
+                print(f'Skriv `python coop.py tidspunkt` for at se alle muligeheder.')
                 return None
             res = coop.check_slot(best['timeSlotId'], store_id)
             # {"totalPriceChange":null,"unavailableProducts":null,"changedProducts":null,"isCheaper":null}
-            res = coop.set_delivery_options(best['timeSlotId'], store_id)
+            res = coop.set_delivery_options(best['timeSlotId'], store_id, is_home_delivery=True)
             return best, res
 
 def timeslot(coop, args):
@@ -474,21 +469,17 @@ def timeslot(coop, args):
                 i += 1
             print()
 
-def test(coop, args):
-    r = coop.post('https://butik.mad.coop.dk/api/basket/update', json=
-    #{"productId":"5701975300939","quantity":1,"lineItemId":"13071940"},
-    {"lineItemUpdates":[{"productId":"5701975300939","quantity":1,"lineItemId":None}]},
-                headers=dict(referer='https://butik.mad.coop.dk/', origin='https://butik.mad.coop.dk'))
-    print(r)
-    print(r.text)
+def test(coop):
+    test_file = stringbuffer()
+    ordrer(coop, dict(N=0, write='test_file'))
+    basket(coop, dict(clear=True))
+    basket(coop, dict(read=test_file))
 
 def search(coop, args):
-    r = coop.search(args.term, n=3)
-    products = json.loads(r.text)['products']
-    #print(f'Fandt {len(products)} muligheder:\n')
+    products = coop.search(args.term, n=3)['products']
     print()
     for vare in products:
-        print(bold_text(vare['displayName']), vare['id'])
+        print(bold_text(vare['displayName']), '\tid:', vare['id'])
         print(vare['spotText'])
         if vare['labels']:
             print(', '.join(l['displayName'] for l in vare['labels']))
@@ -533,11 +524,11 @@ subparsers = parser.add_subparsers()
 timeslot_parser = subparsers.add_parser('tidspunkt', help='Vis og vælg leveringstidspunkt')
 timeslot_parser.set_defaults(func=timeslot)
 timeslot_parser.add_argument('--pick', action='store_true', help='Automatically pick best timeslot')
-timeslot_parser.add_argument('--day', default='Ons', help='Preferred day to autopick')
+timeslot_parser.add_argument('--day', default=2, help='Preferred day to autopick. 0 is Monday, 6 is Sunday')
 timeslot_parser.add_argument('--hour', default=18, help='Preferred time to autopick')
 
-#test_parser = subparsers.add_parser('test', help='Thomas\'s test ting')
-#test_parser.set_defaults(func=test)
+test_parser = subparsers.add_parser('test', help=argparse.SUPPRESS)
+test_parser.set_defaults(func=test)
 
 user_parser = subparsers.add_parser('bruger', help='Hvem er jeg?')
 user_parser.set_defaults(func=user)
