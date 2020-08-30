@@ -10,7 +10,7 @@ Examples:
     See a list of your latest orders
         python3 coop.py ordrer
         
-    Write an earlier order to a file for easy re-ordering.
+    Write an earlier order to a file for easy re-ordering
         python3 coop.py ordrer N --write FILNAVN
         
     Pick a time for delivery
