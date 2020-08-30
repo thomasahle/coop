@@ -496,9 +496,16 @@ def timeslot(coop, args):
 def test(coop, args):
     test_file = io.StringIO()
     orders(coop, types.SimpleNamespace(n=0, write=test_file))
-    test_file.seek(0) # Move file back to the beginning for reading
-    basket(coop, types.SimpleNamespace(read=test_file, clear=False, write=None, test=False))
+    test_file.seek(0)  # Move file back to the beginning for reading
+    basket(
+        coop,
+        types.SimpleNamespace(
+            read=test_file,
+            clear=False,
+            write=None,
+            test=False))
     basket(coop, types.SimpleNamespace(clear=True, write=None, read=None))
+
 
 def search(coop, args):
     products = coop.search(args.term, n=3)['products']
@@ -522,7 +529,7 @@ def help(coop, args):
     parser.print_help()
 
 
-parser = argparse.ArgumentParser(description='''Gejst madbestilling.
+parser = argparse.ArgumentParser(description='''Coop madbestilling.
 
 Eksempler:
 
