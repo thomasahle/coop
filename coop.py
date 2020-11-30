@@ -171,7 +171,7 @@ class Coop:
     def update_basket(self, product_id, quantity, line_item_id=None):
         if line_item_id is not None:
             print('Warning: lineItemId currently not supported')
-        return self.multi_update_basket([product_id, quantity])
+        return self.multi_update_basket([(product_id, quantity)])
 
     def get_stock(self, pids, order_identifier, store_id, timeslot_id):
         r = self.post(API + 'stock/stock',
@@ -287,7 +287,9 @@ def basket_read(coop, args):
             pid = re.sub(r'\(.*?\)', '', pid).strip()
             pids.append(pid)
         quantities.append((int(q), prod_name, pids))
-    all_pids = set.union(*(set(pids) for _, _, pids in quantities))
+    # Set of all pids used in any alternatives - for checking stock
+    all_pids = {pid for _, _, pids in quantities for pid in pids}
+
 
     print('Checker om varerne er tilgængelige...')
     missing = []  # [(n, prod_name)]
@@ -297,6 +299,12 @@ def basket_read(coop, args):
         print('Kør "coop.py tidspunkt --pick" for automatisk at vælge et tidspunkt.')
         order = [(pids[0], q) for q, _, pids in quantities]
     else:
+
+        # Sometimes get_stock seems to return positive amounts for products that
+        # we can't buy anyway. Maybe using getbyids would be helpful?
+        # But it may have been deprecated?
+        #res = coop.getbyids(list(all_pids))
+        
         stock = coop.get_stock(
             list(all_pids),
             basket['orderIdentifier'],
@@ -307,7 +315,8 @@ def basket_read(coop, args):
         for wanted, prod_name, pids in quantities:
             pid = pids[0]
             q = available[pid]['quantity']
-            order.append((pid, min(wanted, q)))
+            if q > 0:
+                order.append((pid, min(wanted, q)))
             if wanted > q:
                 amount = f'kun {q}' if q > 0 else 'ingen'
                 print(
@@ -347,10 +356,19 @@ def basket_read(coop, args):
                     print(f'{p["displayName"]}, {p["id"]} ({p["spotText"]}, Lager: {q})')
         print()
 
+
+
     if order and not args.test:
         print('Vent venligst...')
         res = coop.multi_update_basket(order)
-        print(f'Kurven har nu {len(res["lineItems"])} varer.')
+        bad_res = lambda r: r.get('messages', [''])[0] == 'Et eller flere produkter er ikke længere tilgængelige'
+        if bad_res(res):
+            for product_id, quantity in order:
+                res = coop.update_basket(product_id, quantity)
+                if bad_res(res):
+                    print(f'Problemer med {product_id}. Prov at slette den fra filen.')
+        else:
+            print(f'Kurven har nu {len(res["lineItems"])} varer.')
 
 
 def basket_show(coop, args):
