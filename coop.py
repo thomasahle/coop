@@ -469,8 +469,8 @@ def pick_timeslot(coop, weekday, hour):
             # Pick timeslot not too far away fom 6pm
             q = 10**10  # No timeslots == very bad quality.
             if slot_day['timeSlots']:
-                q, _, best = min(
-                    (slot_loss(s, hour), s['displayName'], s) for s in slot_day['timeSlots'])
+                q, _, _, best = min(
+                    (slot_loss(s, hour), s['displayName'], float('NaN'), s) for s in slot_day['timeSlots'])
             if q > 1:  # Acceptable quality
                 print(f'Kunne ikke finde godt tidspunkt {day}.')
                 print(f'Skriv `python coop.py tidspunkt` for at se alle muligeheder.')
