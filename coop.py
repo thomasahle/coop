@@ -54,7 +54,7 @@ class Coop:
         return self.__login_cb(r)
 
     def login(self, username, password, skip_context=False):
-        success = self.__login('authentication/loginsrc', username, password)
+        success = self.__login(API + 'authentication/loginsrc', username, password)
         if success:
             # Update context to make sure zip is correct
             self.context = self.get_user_context()
